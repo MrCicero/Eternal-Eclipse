@@ -3,7 +3,7 @@ from discord.ext import commands
 import json, os, asyncio, datetime
 
 # ==== CONFIG ====
-TOKEN = "YOUR_BOT_TOKEN"
+TOKEN = "DISCORD_TOKEN"
 PREFIX = "!"
 MOD_LOG_CHANNEL = "💻│mod-logs"
 MUTED_ROLE = "muted"
@@ -190,3 +190,4 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user}")
 
 bot.run(TOKEN)
+
