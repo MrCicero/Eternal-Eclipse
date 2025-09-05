@@ -1,7 +1,6 @@
 import os
 import json
 import discord
-import asyncio
 from discord.ext import commands
 from discord import app_commands
 from flask import Flask
@@ -27,19 +26,11 @@ def keep_alive():
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="/", intents=intents)
 
-# Roles allowed to use mod commands
-MOD_ROLES = ["Owner", "Co-Owner", "Senior Moderator"]
+MOD_ROLES = ["Owner", "Co-Owner", "Admin", "Moderator", "Trial Moderator", "Helper"]
 
-# Track AFK users
 afk_users = {}
 
-# Log channel (replace with your channel ID)
-LOG_CHANNEL_ID = 123456789012345678  
-
-# Track uptime
-start_time = datetime.utcnow()
-
-# Warnings system
+# Warnings file
 WARNINGS_FILE = "warnings.json"
 if not os.path.exists(WARNINGS_FILE):
     with open(WARNINGS_FILE, "w") as f:
@@ -53,19 +44,21 @@ def save_warnings(data):
     with open(WARNINGS_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-# ---------------- Helpers ---------------- #
-async def log_action(guild, message):
-    channel = guild.get_channel(LOG_CHANNEL_ID)
-    if channel:
-        await channel.send(embed=discord.Embed(
-            description=message,
-            color=discord.Color.dark_gray()
-        ))
-
-def is_mod():
-    async def predicate(interaction: discord.Interaction):
-        return any(r.name in MOD_ROLES for r in interaction.user.roles)
-    return app_commands.check(predicate)
+# ---------------- Logging ---------------- #
+async def log_action(guild, action, member, staff, reason=""):
+    log_channel = discord.utils.get(guild.text_channels, name="admin-logs")
+    embed = discord.Embed(
+        title=f"{action}",
+        color=discord.Color.dark_red(),
+        timestamp=datetime.utcnow()
+    )
+    embed.add_field(name="👤 Target", value=f"{member} ({member.mention})", inline=False)
+    embed.add_field(name="👮 Staff", value=f"{staff} ({staff.mention})", inline=False)
+    if reason:
+        embed.add_field(name="📜 Reason", value=reason, inline=False)
+    if log_channel:
+        await log_channel.send(embed=embed)
+    print(f"[LOG] {action} | Target: {member} | Staff: {staff} | Reason: {reason}")
 
 # ---------------- Events ---------------- #
 @bot.event
@@ -77,40 +70,7 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Sync failed: {e}")
 
-@bot.event
-async def on_member_join(member):
-    channel = bot.get_channel(1411797330381770872)
-    if channel:
-        embed = discord.Embed(
-            title="🌑 Eternal Eclipse — Dark Welcome",
-            description=(
-                f"👁️ A new soul dares to cross the Veil… {member.mention} has entered the Eternal Eclipse.\n"
-                "Here, light is devoured, shadows reign, and only the strong ascend. 🌌\n\n"
-                "🔻 To survive the Eclipse:\n"
-                "⚖️ Read the Eternal Decrees → <#1411797568643530834>\n"
-                "🩸 Choose your Rite of Power → <#1411798088477179965>\n"
-                "💎 Give Eclipse their Blessings → <#1411798473606430881>\n"
-                "🔮 Prove your worth to Ascend → <#1411799087560396860>\n\n"
-                f"🌑 You are Soul **#{len(member.guild.members)}** bound to the Eclipse.\n"
-                "Your legend begins in darkness… embrace it, or be forgotten."
-            ),
-            color=discord.Color.dark_red()
-        )
-        embed.set_image(url="https://cdn.discordapp.com/attachments/1404844685901692969/1413241369178148874/chilljapan.png")
-        await channel.send(embed=embed)
-
-@bot.event
-async def on_member_remove(member):
-    channel = bot.get_channel(1411797330381770872)
-    if channel:
-        embed = discord.Embed(
-            title="🕊️ A soul has departed the Eclipse...",
-            description=f"{member.mention} has chosen another path beyond the shadows. 🌑\nTheir legend ends here, but the realm endures…",
-            color=discord.Color.dark_red()
-        )
-        embed.set_image(url="https://cdn.discordapp.com/attachments/1404844685901692969/1413250331743092906/goodbye_banner.png")
-        await channel.send(embed=embed)
-
+# AFK remove on message
 @bot.event
 async def on_message(message):
     if message.author.bot:
@@ -120,7 +80,7 @@ async def on_message(message):
         elapsed = (datetime.utcnow() - afk_since).seconds
         await message.channel.send(
             embed=discord.Embed(
-                description=f"✅ Welcome back {message.author.mention}, I removed your AFK (AFK for {elapsed} seconds).",
+                description=f"✅ Welcome back {message.author.mention}, AFK removed (AFK for {elapsed} seconds).",
                 color=discord.Color.greyple()
             )
         )
@@ -130,7 +90,33 @@ async def on_message(message):
             pass
     await bot.process_commands(message)
 
-# ---------------- Slash Commands ---------------- #
+# ---------------- Checks ---------------- #
+def is_mod():
+    async def predicate(interaction: discord.Interaction):
+        return any(r.name in MOD_ROLES for r in interaction.user.roles)
+    return app_commands.check(predicate)
+
+# ---------------- Helper: DM Embed ---------------- #
+async def send_dm(member, action, reason, staff, color, extra=""):
+    embed_dm = discord.Embed(
+        title="⚠️ Action Taken Against You",
+        color=color,
+        timestamp=datetime.utcnow()
+    )
+    embed_dm.add_field(name="🛠️ Action", value=action, inline=True)
+    embed_dm.add_field(name="👮 Staff", value=staff.mention, inline=True)
+    if reason:
+        embed_dm.add_field(name="📜 Reason", value=reason, inline=False)
+    if extra:
+        embed_dm.add_field(name="ℹ️ Info", value=extra, inline=False)
+    embed_dm.set_footer(text=f"Server: {staff.guild.name}")
+    try:
+        await member.send(embed=embed_dm)
+    except:
+        pass
+
+# ---------------- Commands ---------------- #
+# AFK
 @bot.tree.command(name="afk", description="Set yourself AFK with a reason")
 async def afk(interaction: discord.Interaction, reason: str = "AFK"):
     member = interaction.user
@@ -145,114 +131,121 @@ async def afk(interaction: discord.Interaction, reason: str = "AFK"):
     )
     await interaction.response.send_message(embed=embed)
 
-# ----- Moderator Commands ----- #
+# Ban
 @bot.tree.command(name="ban", description="Ban a user")
 @is_mod()
 async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason"):
+    await send_dm(member, "Ban", reason, interaction.user, discord.Color.red())
     await member.ban(reason=reason)
-    await interaction.response.send_message(embed=discord.Embed(
-        description=f"🔨 {member} was banned. Reason: {reason}",
-        color=discord.Color.greyple()
-    ))
-    await log_action(interaction.guild, f"🔨 {member} was banned by {interaction.user}. Reason: {reason}")
+    await interaction.response.send_message(embed=discord.Embed(description=f"🔨 {member} was banned. Reason: {reason}", color=discord.Color.red()))
+    await log_action(interaction.guild, "🔨 Ban", member, interaction.user, reason)
 
+# Kick
 @bot.tree.command(name="kick", description="Kick a user")
 @is_mod()
 async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason"):
+    await send_dm(member, "Kick", reason, interaction.user, discord.Color.orange())
     await member.kick(reason=reason)
-    await interaction.response.send_message(embed=discord.Embed(
-        description=f"👢 {member} was kicked. Reason: {reason}",
-        color=discord.Color.greyple()
-    ))
-    await log_action(interaction.guild, f"👢 {member} was kicked by {interaction.user}. Reason: {reason}")
+    await interaction.response.send_message(embed=discord.Embed(description=f"👢 {member} was kicked. Reason: {reason}", color=discord.Color.orange()))
+    await log_action(interaction.guild, "👢 Kick", member, interaction.user, reason)
 
+# Mute
 @bot.tree.command(name="mute", description="Mute a user")
 @is_mod()
-async def mute(interaction: discord.Interaction, member: discord.Member):
+async def mute(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason"):
     role = discord.utils.get(member.guild.roles, name="muted")
     if role:
+        await send_dm(member, "Mute", reason, interaction.user, discord.Color.dark_grey())
         await member.add_roles(role)
-        await interaction.response.send_message(embed=discord.Embed(
-            description=f"🔇 {member} was muted.",
-            color=discord.Color.greyple()
-        ))
-        await log_action(interaction.guild, f"🔇 {member} was muted by {interaction.user}")
+        await interaction.response.send_message(embed=discord.Embed(description=f"🔇 {member} was muted.", color=discord.Color.dark_grey()))
+        await log_action(interaction.guild, "🔇 Mute", member, interaction.user, reason)
 
+# Unmute
 @bot.tree.command(name="unmute", description="Unmute a user")
 @is_mod()
 async def unmute(interaction: discord.Interaction, member: discord.Member):
     role = discord.utils.get(member.guild.roles, name="muted")
     if role:
+        await send_dm(member, "Unmute", "You may now chat again.", interaction.user, discord.Color.green())
         await member.remove_roles(role)
-        await interaction.response.send_message(embed=discord.Embed(
-            description=f"🔊 {member} was unmuted.",
-            color=discord.Color.greyple()
-        ))
-        await log_action(interaction.guild, f"🔊 {member} was unmuted by {interaction.user}")
+        await interaction.response.send_message(embed=discord.Embed(description=f"🔊 {member} was unmuted.", color=discord.Color.green()))
+        await log_action(interaction.guild, "🔊 Unmute", member, interaction.user)
 
+# Warn
 @bot.tree.command(name="warn", description="Warn a user")
 @is_mod()
-@app_commands.checks.cooldown(1, 10)  # 1 use per 10s
 async def warn(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason"):
     warnings = load_warnings()
     warnings.setdefault(str(member.id), []).append(reason)
     save_warnings(warnings)
 
-    await interaction.response.send_message(embed=discord.Embed(
-        description=f"⚠️ {member} was warned. Reason: {reason}",
-        color=discord.Color.greyple()
-    ))
-    await log_action(interaction.guild, f"⚠️ {member} was warned by {interaction.user}. Reason: {reason}")
+    count = len(warnings[str(member.id)])
+    await send_dm(member, "Warning", reason, interaction.user, discord.Color.gold(), extra=f"Total warnings: {count}")
+    await interaction.response.send_message(embed=discord.Embed(description=f"⚠️ {member} was warned. Reason: {reason}", color=discord.Color.gold()))
+    await log_action(interaction.guild, "⚠️ Warn", member, interaction.user, reason)
 
-    # Auto-mute after 3 warnings
-    if len(warnings[str(member.id)]) >= 3:
+    # Auto-mute at 3 warns
+    if count >= 3:
         role = discord.utils.get(member.guild.roles, name="muted")
         if role:
             await member.add_roles(role)
-            await log_action(interaction.guild, f"🔇 {member} auto-muted (3 warnings)")
+            await send_dm(member, "Auto-Mute", "You reached 3 warnings.", interaction.user, discord.Color.dark_grey())
+            await log_action(interaction.guild, "🔇 Auto-Mute", member, interaction.user, "3 warnings reached")
 
+# Warnings
 @bot.tree.command(name="warnings", description="Check a user's warnings")
 @is_mod()
 async def warnings(interaction: discord.Interaction, member: discord.Member):
-    warnings_list = load_warnings().get(str(member.id), [])
+    warnings = load_warnings().get(str(member.id), [])
     embed = discord.Embed(
-        description=f"{member} has {len(warnings_list)} warnings.\n" + "\n".join([f"- {w}" for w in warnings_list]),
+        description=f"{member} has {len(warnings)} warnings.\n" + "\n".join([f"- {w}" for w in warnings]),
         color=discord.Color.greyple()
     )
     await interaction.response.send_message(embed=embed)
 
+# Clearwarn
 @bot.tree.command(name="clearwarn", description="Clear all warnings for a user")
 @is_mod()
 async def clearwarn(interaction: discord.Interaction, member: discord.Member):
     warnings = load_warnings()
     warnings[str(member.id)] = []
     save_warnings(warnings)
-    await interaction.response.send_message(embed=discord.Embed(
-        description=f"✅ Cleared all warnings for {member}",
-        color=discord.Color.greyple()
-    ))
-    await log_action(interaction.guild, f"✅ Cleared warnings for {member}")
 
-# ----- Utility ----- #
-@bot.tree.command(name="uptime", description="Check bot uptime")
+    await send_dm(member, "Warnings Cleared", "", interaction.user, discord.Color.blue())
+    await interaction.response.send_message(embed=discord.Embed(description=f"✅ Cleared all warnings for {member}", color=discord.Color.blue()))
+    await log_action(interaction.guild, "✅ Clearwarn", member, interaction.user)
+
+# Uptime
+start_time = datetime.utcnow()
+
+@bot.tree.command(name="uptime", description="Show bot uptime")
 async def uptime(interaction: discord.Interaction):
     delta = datetime.utcnow() - start_time
     hours, remainder = divmod(int(delta.total_seconds()), 3600)
     minutes, seconds = divmod(remainder, 60)
     await interaction.response.send_message(
-        f"⏳ Uptime: {hours}h {minutes}m {seconds}s"
+        embed=discord.Embed(
+            description=f"⏱️ Uptime: {hours}h {minutes}m {seconds}s",
+            color=discord.Color.greyple()
+        )
     )
 
-# ---------------- Error Handler ---------------- #
+# Help
+@bot.tree.command(name="help", description="Show all commands")
+async def help(interaction: discord.Interaction):
+    embed = discord.Embed(title="📖 Eternal Eclipse Bot Commands", color=discord.Color.greyple())
+    embed.add_field(name="AFK", value="`/afk <reason>` — Set yourself AFK", inline=False)
+    embed.add_field(name="Moderation", value="`/ban`, `/kick`, `/mute`, `/unmute`, `/warn`, `/warnings`, `/clearwarn`", inline=False)
+    embed.add_field(name="Utility", value="`/uptime`, `/help`", inline=False)
+    await interaction.response.send_message(embed=embed)
+
+# ---------------- Error Handling ---------------- #
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.CheckFailure):
-        await interaction.response.send_message("❌ You don’t have permission for this.", ephemeral=True)
-    elif isinstance(error, app_commands.CommandOnCooldown):
-        await interaction.response.send_message(f"⏳ Slow down! Try again in {round(error.retry_after, 1)}s.", ephemeral=True)
+        await interaction.response.send_message("❌ You don’t have permission to use this command.", ephemeral=True)
     else:
-        await interaction.response.send_message("⚠️ Something went wrong.", ephemeral=True)
-        raise error
+        await interaction.response.send_message(f"❌ Error: {error}", ephemeral=True)
 
 # ---------------- Run Bot ---------------- #
 keep_alive()
