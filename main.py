@@ -175,4 +175,5 @@ import threading
 threading.Thread(target=run_flask).start()
 
 # ---------- Run Bot ----------
-bot.run(os.environ["MTQxMzE5NTYyNDY3Mjc4ODU4Mg.GXPwFZ.fBeDdp2gGzGtv4Yp5zaQ7KjOOheRRn9Ga31FIY"]
+bot.run(os.environ["DISCORD_TOKEN"]
+
